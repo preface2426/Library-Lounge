@@ -1,0 +1,1 @@
+Curated 2026-11-01. FurnitureV2: assets/LowPolyFurniturePackVol2_v1.0.zip, reodesuxz free personal/commercial, no standalone redistribution. CozyCafe: assets/Cafe_Furniture_Package_FREE.zip, Oceanic Meshworks FREE kit; review included original README. AlineCC0: assets/furniture_pack_update_2.0.zip, CC0. Keep original ZIPs and licensing.

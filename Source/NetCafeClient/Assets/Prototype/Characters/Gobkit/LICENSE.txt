@@ -1,0 +1,11 @@
+Gobkit Free Animal Pack — CC0 1.0 Universal (Public Domain Dedication)
+
+To the extent possible under law, Gobkit (Alsomind Tech Co., Ltd.) has waived
+all copyright and related or neighboring rights to this pack of 10 low-poly
+animal models and their textures. You can copy, modify, distribute and use
+them, even for commercial purposes, all without asking permission and with no
+attribution required.
+
+Full text: https://creativecommons.org/publicdomain/zero/1.0/
+
+More free CC0 characters + a generation API: https://gobkit.com/freebies

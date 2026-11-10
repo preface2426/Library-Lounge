@@ -1,0 +1,25 @@
+# LibraryLounge room admission API -- no LiveKit secrets are checked into Git.
+# Free instances sleep on idle and are unsuitable for reliable always-on rooms.
+services:
+  - type: web
+    name: librarylounge-room-service
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: Source/room-service
+    buildCommand: npm ci --include=dev --no-audit --no-fund && npm run typecheck && npm test
+    startCommand: npm start
+    healthCheckPath: /readyz
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_VERSION
+        value: 24.11.1
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_WS_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false

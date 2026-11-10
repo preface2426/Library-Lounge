@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"name": "Agents",
+			"path": "Samples~/Agents"
+		},
+		{
+			"name": "Common",
+			"path": "Samples~/Common"
+		},
+		{
+			"name": "Meet",
+			"path": "Samples~/Meet"
+		},
+		{
+			"name": "client-sdk-unity",
+			"path": "."
+		}
+	],
+	"settings": {
+		"dotnet.defaultSolution": "Meet.sln"
+	}
+}

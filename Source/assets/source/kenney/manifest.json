@@ -1,0 +1,37 @@
+{
+  "packages": [
+    {
+      "name": "furniture-kit",
+      "version_from_license": "2.0",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source_page": "https://kenney.nl/assets/furniture-kit",
+      "downloaded_on": "2026-10-29",
+      "archive": "kenney_furniture-kit.zip",
+      "archive_bytes": 5130729,
+      "archive_sha256": "e67652d0932cee41683f74711c03d3e192a2af9979ef8e6b237711f5482d46b0",
+      "extracted_directory": "furniture-kit",
+      "extracted_files": 1546,
+      "uncompressed_bytes": 17671416,
+      "fbx_models": 140,
+      "unity_import_tested": false
+    },
+    {
+      "name": "building-kit",
+      "version_from_license": "1.0",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source_page": "https://kenney.nl/assets/building-kit",
+      "downloaded_on": "2026-10-29",
+      "archive": "kenney_building-kit.zip",
+      "archive_bytes": 1598905,
+      "archive_sha256": "2740ef5772fb5fb3d7aab881db22d129f6b68afe711b1a79e6d5e9e19cf3eec6",
+      "extracted_directory": "building-kit",
+      "extracted_files": 407,
+      "uncompressed_bytes": 4527130,
+      "fbx_models": 79,
+      "unity_import_tested": false
+    }
+  ],
+  "workflow": "Assets only; wait for explicit user instruction before creating Unity project, making room or building. Remove unused assets after construction and dependency verification."
+}

@@ -1,0 +1,8 @@
+{
+  "project": "LibraryLounge",
+  "developmentVersion": "0.1.3",
+  "revision": "Restroom R11 PlayerRecovery",
+  "status": "QA candidate",
+  "developmentSource": "Source/NetCafeClient",
+  "scene": "Source/NetCafeClient/Assets/ArtV3/Scenes/Restroom_Playable_v013.unity"
+}

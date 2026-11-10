@@ -1,0 +1,32 @@
+# Unity and local build output
+/Builds/
+/Source/Builds/
+/Source/NetCafeClient/Library/
+/Source/NetCafeClient/Logs/
+/Source/NetCafeClient/Temp/
+/Source/NetCafeClient/UserSettings/
+/Source/NetCafeClient/obj/
+**/node_modules/
+**/__pycache__/
+*.log
+*.pyc
+*.csproj.user
+.vs/
+.DS_Store
+Thumbs.db
+
+# Local room configuration and credentials
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem
+/Source/NetCafeClient/Assets/StreamingAssets/room-service.url
+/Source/NetCafeClient/Assets/StreamingAssets/room-service.url.meta
+
+# Download separately; furniture import metadata is tracked.
+/Source/NetCafeClient/Assets/CozyLoungeGreybox/CuratedLowPoly/Models/FurnitureV2/*.fbx
+/Source/Tools/LiveKitLocalTest/v1.13.11/*.exe
+/Source/Tools/LiveKitLocalTest/v1.13.11/*.zip
