@@ -24,11 +24,12 @@ public static class LibraryLoungeStationBuild
               label == "MediaQA" || label == "MediaQA2" || label == "MediaQA3" || label == "Media" ||
               label == "WallDefaultQA" || label == "WallDefault" ||
               label == "WallClarityQA" || label == "WallClarity" ||
-              label == "PlayerRed" || label == "PlayerQA" || label == "PlayerQA2" || label == "PlayerRecovery" || label == "PlayerRecovery2")))
+              label == "PlayerRed" || label == "PlayerQA" || label == "PlayerQA2" || label == "PlayerRecovery" || label == "PlayerRecovery2" ||
+              label == "WanStability" || label == "WanStability2" || label == "WanStability3")))
             throw new InvalidOperationException("Use an explicit station build label");
         string date = label.StartsWith("WallDefault", StringComparison.Ordinal) ||
             label.StartsWith("WallClarity", StringComparison.Ordinal) ||
-            label.StartsWith("Player", StringComparison.Ordinal) ? "20261110" : "20261109";
+            (label.StartsWith("Player", StringComparison.Ordinal) || label.StartsWith("WanStability", StringComparison.Ordinal)) ? "20261110" : "20261109";
         var output = Path.Combine(LibraryLoungeUiFixBuild.FindRoot(),
             "Builds/LibraryLounge-v0.1.3-Restroom-" + revision + "-" + label + "-" + date + "/LibraryLounge.exe");
         if (File.Exists(output)) throw new InvalidOperationException("Preserve existing station build");
@@ -38,7 +39,7 @@ public static class LibraryLoungeStationBuild
             options = label == "Final" || label == "Release" || label == "Verified" ||
                 label == "Share" || label == "Share2" || label == "Share3" || label == "Stand" || label == "Stand2" || label == "FontReset" ||
                 label == "NativeDisplayRed" || label == "NativeDisplay" || label == "Media" ||
-                label == "WallDefault" || label == "WallClarity" || label == "PlayerRecovery" || label == "PlayerRecovery2"
+                label == "WallDefault" || label == "WallClarity" || label == "PlayerRecovery" || label == "PlayerRecovery2" || label.StartsWith("WanStability", StringComparison.Ordinal)
                 ? BuildOptions.None : BuildOptions.Development,
             extraScriptingDefines = new[] { "NETCAFE_ACCEPTANCE" }
         });

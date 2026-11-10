@@ -1,4 +1,4 @@
-﻿#if NETCAFE_B1
+#if NETCAFE_B1
 using System;
 using System.Collections;
 using LiveKit;
@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 // Experimental B1 networking surface; does not own native desktop capture or input.
-public sealed class NetCafeNetworkSession : MonoBehaviour
+public sealed partial class NetCafeNetworkSession : MonoBehaviour
 {
     public enum Phase { Idle, RequestingCredentials, Connecting, Connected, Reconnecting, Leaving, Disconnected, Failed }
     [SerializeField] string roomApiUrl = "http://127.0.0.1:8787";
@@ -43,6 +43,42 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
     public Phase State { get; private set; } = Phase.Idle;
     public string Error { get; private set; } = "";
     public bool WaitingForRoomService { get; private set; }
+    AdmissionTrace admission;
+    public AdmissionStep CurrentAdmissionStep => admission?.Step ?? AdmissionStep.None;
+    public string AdmissionDiagnostic => admission?.Format() ?? "";
+    const string PublishedRoomService = "https://librarylounge-room-service.onrender.com";
+#if UNITY_EDITOR || DEVELOPMENT_BUILD || NETCAFE_ACCEPTANCE
+    // Only the fault-injection probe enables retry against its loopback fixture.
+    internal bool AllowLoopbackReservationRetryForProbe { get; set; }
+#endif
+    UnityWebRequest warmupRequest;
+    float nextWarmupAt;
+
+    public void WarmPublicRoomService(string url)
+    {
+        if (!IsPublishedService(url) || warmupRequest != null || Time.realtimeSinceStartup < nextWarmupAt) return;
+        nextWarmupAt = Time.realtimeSinceStartup + 30f;
+        warmupRequest = UnityWebRequest.Get(PublishedRoomService + "/healthz");
+        warmupRequest.timeout = RoomServiceProbeSeconds;
+        warmupRequest.redirectLimit = 0;
+        StartCoroutine(WarmHealth(warmupRequest));
+    }
+
+    IEnumerator WarmHealth(UnityWebRequest request)
+    {
+        try { yield return request.SendWebRequest(); }
+        finally
+        {
+            if (ReferenceEquals(warmupRequest, request))
+            {
+                warmupRequest = null;
+                request.Dispose();
+            }
+        }
+    }
+
+    static bool IsPublishedService(string url) =>
+        string.Equals(url?.Trim().TrimEnd('/'), PublishedRoomService, StringComparison.OrdinalIgnoreCase);
     float serviceWakeStartedAt;
     public int RoomServiceWaitSeconds => WaitingForRoomService ?
         Mathf.Clamp(Mathf.FloorToInt(Time.realtimeSinceStartup - serviceWakeStartedAt), 0, 90) : 0;
@@ -180,6 +216,13 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
         if (cafe != null) cafe.BeforeQuit -= RequestNetworkExit;
         ++generation;
         CancelRequests();
+        if (warmupRequest != null)
+        {
+            var request = warmupRequest;
+            warmupRequest = null;
+            request.Abort();
+            request.Dispose();
+        }
         ++memberFetchToken;
         fetchingMembers = false;
         intentional = true;
@@ -221,7 +264,9 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
     void Begin(bool join)
     {
         if (State != Phase.Idle && State != Phase.Disconnected && State != Phase.Failed) return;
+        admission = null;
         if (join && string.IsNullOrWhiteSpace(inviteCode)) { SetState(Phase.Failed, "INVITE_REQUIRED"); return; }
+        admission = new AdmissionTrace(join);
         // Prepare before even a local SDK connection can initialize its shared
         // HTTP TLS client. Local ws remains usable if no roots can be read.
         CafeLiveKitTlsRoots.Prepare();
@@ -241,7 +286,7 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
     }
     IEnumerator Request(int id, string method, string path, string body, string credential,
         Action<string> success, Action<string> failure, int timeoutSeconds = 15,
-        float deadline = float.PositiveInfinity)
+        float deadline = float.PositiveInfinity, Action<string> unavailableBody = null)
     {
         if (id != generation) yield break;
         string url=roomApiUrl.TrimEnd('/')+path,response=null;long status=0;bool okay=false;
@@ -275,6 +320,7 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
             }
             req.downloadHandler = new DownloadHandlerBuffer();
             req.timeout = timeoutSeconds;
+            req.redirectLimit = 0;
             if (!string.IsNullOrEmpty(credential)) req.SetRequestHeader("Authorization", "Bearer " + credential);
             var operation = req.SendWebRequest();
             while (id == generation && Time.realtimeSinceStartup < deadline && !operation.isDone) yield return null;
@@ -286,6 +332,7 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
         }
             if (okay) success(response);
             else {
+                if (status == 503) unavailableBody?.Invoke(response);
                 string e = response;
                 ErrorResponse parsed = null;
                 if (!string.IsNullOrEmpty(e) && e.TrimStart().StartsWith("{", StringComparison.Ordinal))
@@ -301,77 +348,111 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
     }
     [Serializable] class HealthResponse { public bool ok, ready; }
     const int RoomServiceProbeSeconds = 12;
+    static bool ReadProbe(string body, HealthResponse value)
+    {
+        if (string.IsNullOrEmpty(body) || !body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+            return false;
+        try { JsonUtility.FromJsonOverwrite(body, value); return true; }
+        catch (ArgumentException) { return false; }
+    }
+
+    static bool IsTransientAdmissionError(string error) => error is
+        "NETWORK_UNREACHABLE" or "HTTP_408" or "HTTP_502" or "HTTP_503" or "HTTP_504";
+
     IEnumerator WaitForRoomService(int id, Action<string> failure)
     {
-        // Probe before reserving a room: a loading page or a timed-out POST must
-        // not create orphan rooms while a free instance is still waking up.
+        // Render health only proves that the API answered; readiness must also
+        // prove that this API can reach LiveKit before we reserve a room.
         serviceWakeStartedAt = Time.realtimeSinceStartup;
         WaitingForRoomService = true;
         float deadline = serviceWakeStartedAt + 90f;
-        bool livekitPending = false;
+        bool checkReadiness = false;
         try
         {
-        while (id == generation)
-        {
-            float remaining = deadline - Time.realtimeSinceStartup;
-            if (remaining <= 0) { failure(livekitPending ? "LIVEKIT_NOT_READY" : "SERVICE_WAKE_TIMEOUT"); yield break; }
-            string response = null, error = null;
-            yield return Request(id, "GET", "/healthz", null, null,
-                value => response = value, value => error = value,
-                Mathf.Clamp(Mathf.CeilToInt(remaining), 1, RoomServiceProbeSeconds), deadline);
-            if (id != generation) yield break;
-            if (Time.realtimeSinceStartup >= deadline) { failure(livekitPending ? "LIVEKIT_NOT_READY" : "SERVICE_WAKE_TIMEOUT"); yield break; }
-            if (error == null)
+            while (id == generation && Time.realtimeSinceStartup < deadline)
             {
-                HealthResponse health = null;
-                if (!string.IsNullOrEmpty(response) && response.TrimStart().StartsWith("{", StringComparison.Ordinal))
-                    try { health = JsonUtility.FromJson<HealthResponse>(response); }
-                    catch (ArgumentException) { /* Render may return a loading page before the API starts. */ }
-                if (health != null && health.ok)
+                string body = null, error = null;
+                if (!checkReadiness)
                 {
-                    // Node can be alive while LiveKit REST is unavailable. Never
-                    // reserve a room until both services report actual readiness.
-                    livekitPending = true;
-                    response = null;
-                    yield return Request(id, "GET", "/readyz", null, null,
-                        value => response = value, value => error = value,
-                        Mathf.Clamp(Mathf.CeilToInt(deadline - Time.realtimeSinceStartup), 1, RoomServiceProbeSeconds), deadline);
+                    admission.Begin(AdmissionStep.Health);
+                    yield return Request(id, "GET", "/healthz", null, null,
+                        value => body = value, value => error = value, RoomServiceProbeSeconds, deadline);
                     if (id != generation) yield break;
-                    if (Time.realtimeSinceStartup >= deadline) { failure("LIVEKIT_NOT_READY"); yield break; }
-                    HealthResponse ready = null;
-                    if (error == null && !string.IsNullOrEmpty(response) &&
-                        response.TrimStart().StartsWith("{", StringComparison.Ordinal))
-                        try { ready = JsonUtility.FromJson<HealthResponse>(response); }
-                        catch (ArgumentException) { /* A proxy loading page is not readiness. */ }
-                    if (ready != null && ready.ready) yield break;
+                    var health = new HealthResponse();
+                    checkReadiness = error == null && ReadProbe(body, health) && health.ok;
+                    admission.End(checkReadiness ? null : error ?? "INVALID_HEALTH_REPLY");
+                    if (error != null && error != "HTTP_429" && !IsTransientAdmissionError(error))
+                    { failure(error); yield break; }
                 }
+                if (checkReadiness && Time.realtimeSinceStartup < deadline)
+                {
+                    body = null; error = null;
+                    string unavailable = null;
+                    admission.Begin(AdmissionStep.Readiness);
+                    yield return Request(id, "GET", "/readyz", null, null,
+                        value => body = value, value => error = value, RoomServiceProbeSeconds, deadline,
+                        value => unavailable = value);
+                    if (id != generation) yield break;
+                    var ready = new HealthResponse();
+                    bool readyNow = error == null && ReadProbe(body, ready) && ready.ready;
+                    admission.End(readyNow ? null : error ?? "INVALID_READY_REPLY");
+                    if (readyNow && Time.realtimeSinceStartup < deadline) yield break;
+                    if (error != null && error != "HTTP_429" && !IsTransientAdmissionError(error))
+                    { failure(error); yield break; }
+                    // Only a structured "not ready" from our API proves it is
+                    // still awake. Recheck health on proxy pages or lost replies.
+                    var pending = new HealthResponse { ready = true };
+                    checkReadiness = error == "HTTP_503" && ReadProbe(unavailable, pending) && !pending.ready;
+                }
+                float retryAt = Mathf.Min(deadline, Time.realtimeSinceStartup + 2f);
+                while (id == generation && Time.realtimeSinceStartup < retryAt) yield return null;
             }
-            else livekitPending = false;
-            if (error != null && error != "NETWORK_UNREACHABLE" && error != "HTTP_408" && error != "HTTP_429" &&
-                     error != "HTTP_502" && error != "HTTP_503" && error != "HTTP_504")
-            {
-                failure(error); yield break;
-            }
-            float retryAt = Mathf.Min(deadline, Time.realtimeSinceStartup + 2f);
-            while (id == generation && Time.realtimeSinceStartup < retryAt) yield return null;
-        }
+            if (id == generation)
+                failure(CurrentAdmissionStep == AdmissionStep.Readiness ? "LIVEKIT_NOT_READY" : "SERVICE_WAKE_TIMEOUT");
         }
         finally { if (id == generation) WaitingForRoomService = false; }
     }
+
+    void AdmissionFailed(string error)
+    {
+        admission?.Fail(error);
+        SetState(Phase.Failed, error);
+    }
+
     IEnumerator ConnectFlow(int id, bool join)
     {
         string response = null, failure = null;
         yield return WaitForRoomService(id, value => failure = value);
         if (id != generation) yield break;
-        if (failure != null) { SetState(Phase.Failed, failure); yield break; }
-        var payload = new InviteRequest {displayName = displayName.Trim(), inviteCode = inviteCode.Trim(),
-            requestId = Guid.NewGuid().ToString("N")};
-        yield return Request(id, "POST", join ? "/v1/rooms/join" : "/v1/rooms",
-            JsonUtility.ToJson(payload), null, value => response = value, value => failure = value);
-        if (id != generation) yield break;
+        if (failure != null) { AdmissionFailed(failure); yield break; }
+
+        var payload = new InviteRequest { displayName = displayName.Trim(), inviteCode = inviteCode.Trim(),
+            requestId = Guid.NewGuid().ToString("N") };
+        string body = JsonUtility.ToJson(payload), address = roomApiUrl;
+        string path = join ? "/v1/rooms/join" : "/v1/rooms";
+        // The published service deduplicates request IDs, including while the
+        // first POST is still running. Do not assume that of custom servers.
+        bool retryAllowed = IsPublishedService(address);
+#if UNITY_EDITOR || DEVELOPMENT_BUILD || NETCAFE_ACCEPTANCE
+        retryAllowed |= AllowLoopbackReservationRetryForProbe && CafeLoopbackHttp.CanHandle(address);
+#endif
+        for (int attempt = 0; ; attempt++)
+        {
+            admission.Begin(AdmissionStep.Reservation);
+            response = null; failure = null;
+            yield return Request(id, "POST", path, body, null,
+                value => response = value, value => failure = value);
+            if (id != generation) yield break;
+            if (failure == null) break;
+            admission.End(failure);
+            if (attempt != 0 || !retryAllowed || !IsTransientAdmissionError(failure)) break;
+            yield return new WaitForSecondsRealtime(1.5f);
+            if (id != generation) yield break;
+            if (!string.Equals(address, roomApiUrl, StringComparison.OrdinalIgnoreCase)) break;
+        }
         if (failure != null)
         {
-            SetState(Phase.Failed, failure == "NETWORK_UNREACHABLE" ? "ROOM_API_NO_RESPONSE" : failure);
+            AdmissionFailed(failure == "NETWORK_UNREACHABLE" ? "ROOM_API_NO_RESPONSE" : failure);
             yield break;
         }
         try { session = JsonUtility.FromJson<RoomSessionResponse>(response); }
@@ -381,12 +462,14 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
             string.IsNullOrEmpty(session.sessionCredential)) {
             yield return FailAdmission(id, "INVALID_SERVER_REPLY"); yield break;
         }
+        admission.End(null);
         yield return ConnectTransport(id, session.connection);
     }
     [Serializable] class InviteRequest { public string displayName, inviteCode, requestId; }
     IEnumerator ConnectTransport(int id, Credentials creds)
     {
         if (id != generation) yield break;
+        admission.Begin(AdmissionStep.LiveKit);
         if (Uri.TryCreate(creds.url, UriKind.Absolute, out var transportUri) &&
             transportUri.Scheme == "wss" && !CafeLiveKitTlsRoots.Prepare())
         {
@@ -423,6 +506,8 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
             yield return FailAdmission(id, "LIVEKIT_CONNECT_FAILED");
             yield break;
         }
+        admission.End(null);
+        admission.Begin(AdmissionStep.Confirm);
         // The room API must also observe our participant before we claim admission.
         string failure = null;
         yield return Request(id, "POST", "/v1/rooms/" + session.roomId + "/confirm", "{}",
@@ -435,11 +520,14 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
                 failure ?? "LIVEKIT_DISCONNECTED_DURING_CONFIRM");
             yield break;
         }
+        admission.End(null);
+        admission = null;
         SetState(Phase.Connected);
         RefreshMembers();
     }
     IEnumerator FailAdmission(int id, string error)
     {
+        admission?.End(error);
         // A failed LiveKit connection must release the reserved host/member
         // before retry becomes available. Otherwise a retry strands old rooms.
         ClearTransport();
@@ -455,7 +543,7 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
         if (id == generation)
         {
             session = null;
-            SetState(Phase.Failed, error);
+            AdmissionFailed(error);
         }
     }
     void OnReconnecting(Room r)
@@ -563,7 +651,13 @@ public sealed class NetCafeNetworkSession : MonoBehaviour
     }
     public int RemotePeersForSmoke => room == null ? 0 : room.RemoteParticipants.Count;
 #endif
-    void OnDestroy() { ++generation; CancelRequests(); intentional = true; StopReconnectWatch(); ClearTransport(); }
+    void OnDestroy()
+    {
+        var pendingWarmup = warmupRequest;
+        warmupRequest = null;
+        if (pendingWarmup != null) { pendingWarmup.Abort(); pendingWarmup.Dispose(); }
+        ++generation; CancelRequests(); intentional = true; StopReconnectWatch(); ClearTransport();
+    }
     // Only show legacy controls when no active V2 home UI exists.
     void OnGUI()
     {

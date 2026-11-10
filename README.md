@@ -1,8 +1,10 @@
 # Library Lounge · 线上网吧
 
-当前源码快照：**v0.1.3 Restroom R11 · Player Recovery**（2026-11-10，Windows x64 测试候选）。包含 Unity 客户端、原生桌面采集与输入模块、房间服务，以及公共大屏和角色回位的当前实现。
+当前源码版本：**v0.1.3 Final · Restroom R11**（2026-11-10）。包含 Unity 客户端、原生桌面采集与输入模块、房间服务和公共大屏。
 
-本版第一人称视角跟随所选角色的眼睛高度。掉出地板会回到房内起点，也可从「Esc → 更多 → 返回初始位置」手动回位。已开启的桌面分享与大屏投放在离座或回位后继续。上一个 R11 版本加入的桌面声音、最高 2560×1440 共享和分阶段开房超时提示也包含在本快照中。
+打开创建或加入页面会预热预设的公网房间服务。临时网络错误会按原请求重试一次，失败后可从大厅复制分阶段诊断。实际解包的本机、公网开房和退出已通过；同一公网服务已验证两个独立房间可以并存。不同网络的双机测试及确认冷启动仍待验证。
+
+第一人称视角跟随角色眼高；掉出地板会回到房内起点，也可从「Esc → 更多 → 返回初始位置」手动回位。已开启的桌面分享与大屏投放在离座或回位后继续，支持桌面声音和最高 2560×1440 的共享。
 
 ## 打开 Unity 工程
 
@@ -14,7 +16,7 @@
 Windows 构建可通过 Unity 的 Build Profiles 进行。也可从仓库根目录在 PowerShell 运行：
 
 ```powershell
-& "<Unity.exe 的完整路径>" -batchmode -quit -projectPath "$PWD/Source/NetCafeClient" -executeMethod LibraryLoungeStationBuild.BuildMouse -mouseBuild=PlayerRecovery2 -logFile "$PWD/unity-build.log"
+& "<Unity.exe 的完整路径>" -batchmode -quit -projectPath "$PWD/Source/NetCafeClient" -executeMethod LibraryLoungeStationBuild.BuildMouse -mouseBuild=WanStability3 -logFile "$PWD/unity-build.log"
 ```
 
 独立客户端生成在 `Builds/`。需要重编译桌面采集插件时，使用 `Source/native/DesktopCapture/build.ps1`，需要 Visual Studio C++ 桌面工具链。
@@ -37,4 +39,4 @@ npm start
 
 以上是 LiveKit 自带的本机开发值。跨网络联调需要 HTTPS 房间服务和独立的 LiveKit 配置，正式密钥只在服务端设置。Render 配置参考见 `Source/deploy/render.example.yaml`。
 
-本快照是测试候选；公网在朋友网络上偶发的开房超时和真实跨设备音视频仍待验。仓库包含开发源码，Windows 分享包和历史冻结版本独立保留。
+仓库保存公开源码；Windows 完整分享包与历史冻结版本独立保留。

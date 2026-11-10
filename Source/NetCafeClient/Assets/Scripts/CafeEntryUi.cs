@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -133,6 +133,11 @@ public sealed partial class CafeEntryUi : MonoBehaviour
             StartCoroutine(HostAutostartCreateLeaveSmoke());
         if (Array.IndexOf(Environment.GetCommandLineArgs(), "-wanCloudB1Smoke") >= 0)
             StartCoroutine(WanCloudB1Smoke());
+#if NETCAFE_B1 && (UNITY_EDITOR || DEVELOPMENT_BUILD || NETCAFE_ACCEPTANCE)
+        foreach (string argument in Environment.GetCommandLineArgs())
+            if (argument.StartsWith("-wanStabilityProbe=", StringComparison.Ordinal))
+                StartCoroutine(WanStabilityProbe(argument.Substring("-wanStabilityProbe=".Length)));
+#endif
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         if (Array.IndexOf(Environment.GetCommandLineArgs(), "-b2SyntheticHost") >= 0 ||
             Array.IndexOf(Environment.GetCommandLineArgs(), "-b2SyntheticGuest") >= 0)
@@ -166,6 +171,7 @@ public sealed partial class CafeEntryUi : MonoBehaviour
     }
 
 #if NETCAFE_B1
+    bool admissionCopied;
     void OnConnectionState(NetCafeNetworkSession.Phase phase) { pendingPhase = (int)phase; }
     void OnMembersChanged() { membersDirty = true; }    void OnVoiceChanged()
     {
@@ -247,13 +253,26 @@ public sealed partial class CafeEntryUi : MonoBehaviour
     void UpdateBusyProgress()
     {
         if (busyProgress == null) return;
-        int progress = network != null && network.WaitingForRoomService ? network.RoomServiceWaitSeconds :
-            network != null && network.State == NetCafeNetworkSession.Phase.Connecting ? -2 : -1;
+        var step = network?.CurrentAdmissionStep ?? NetCafeNetworkSession.AdmissionStep.None;
+        bool waiting = network != null && network.WaitingForRoomService;
+        int seconds = waiting ? network.RoomServiceWaitSeconds : 0;
+        bool readiness = step == NetCafeNetworkSession.AdmissionStep.Readiness;
+        int progress = waiting ? seconds * 2 + (readiness ? 1 : 0) : -(int)step - 1;
         if (progress == lastBusyProgress) return;
         lastBusyProgress = progress;
-        busyProgress.text = progress >= 0
-            ? "正在等待房间服务…\n通常约 1 分钟 · 最长 90 秒\n已等待 " + progress + " 秒"
-            : progress == -2 ? "正在建立实时连接…\n通常只需几秒" : "正在验证房间…\n通常只需几秒";
+        if (waiting)
+        {
+            busyProgress.text = (readiness ? "正在检查 LiveKit 是否就绪…" : "正在等待房间服务…") +
+                "\n通常约 1 分钟 · 最长 90 秒\n已等待 " + seconds + " 秒";
+            return;
+        }
+        busyProgress.text = step switch
+        {
+            NetCafeNetworkSession.AdmissionStep.Reservation => "正在提交开房或加入请求…",
+            NetCafeNetworkSession.AdmissionStep.LiveKit => "正在连接 LiveKit 实时服务…",
+            NetCafeNetworkSession.AdmissionStep.Confirm => "正在确认入房…",
+            _ => "正在验证房间…"
+        };
     }
     void ApplyPhase(NetCafeNetworkSession.Phase state)
     {
@@ -304,6 +323,7 @@ public sealed partial class CafeEntryUi : MonoBehaviour
             }
             else if (visible && (state == NetCafeNetworkSession.Phase.Failed || page == Page.Busy))
             {
+                admissionCopied = false;
                 message = state == NetCafeNetworkSession.Phase.Failed ?
                     TranslateError(network.Error) : "已取消连接。";
                 Show(Page.Home);
@@ -513,6 +533,8 @@ public sealed partial class CafeEntryUi : MonoBehaviour
         Resize();
         Render();
 #if NETCAFE_B1
+        if (next == Page.Create || next == Page.Join)
+            network?.WarmPublicRoomService(serviceInput);
         if (next == Page.Create && CafeLocalHostRuntime.IsLoopbackUrl(serviceInput))
             BeginAutoLocalHost();
         else if (next == Page.Home || next == Page.Lobby || next == Page.Join)
@@ -700,6 +722,11 @@ public sealed partial class CafeEntryUi : MonoBehaviour
         {
             AddText(content, message, 17, CafeUiTheme.Danger, 56);
         }
+#if NETCAFE_B1
+        if (page == Page.Home && network != null && network.State == NetCafeNetworkSession.Phase.Failed &&
+            !string.IsNullOrEmpty(network.AdmissionDiagnostic))
+            AddButton(admissionCopied ? "诊断已复制" : "复制诊断", CopyAdmissionDiagnostic);
+#endif
         if(footerButton!=null && footerButton.gameObject.activeInHierarchy)focusable.Add(footerButton);
         if(identityPortrait!=null && identityPortrait.gameObject.activeInHierarchy)focusable.Add(identityPortrait.GetComponent<Button>());
         if (identityMicrophone != null && identityMicrophone.gameObject.activeInHierarchy && identityMicrophone.IsInteractable()) focusable.Add(identityMicrophone);
@@ -888,6 +915,16 @@ public sealed partial class CafeEntryUi : MonoBehaviour
         if (!InNetworkRoom) { cafe.RequestQuit(); return; }
         AskLeave(); quitAfterLeave = true;
     }
+#if NETCAFE_B1
+    void CopyAdmissionDiagnostic()
+    {
+        var text = network?.AdmissionDiagnostic ?? "";
+        if (string.IsNullOrEmpty(text)) return;
+        try { GUIUtility.systemCopyBuffer = text; admissionCopied = true; }
+        catch (Exception) { message = "无法访问剪贴板，请再试一次。"; }
+        Render(true);
+    }
+#endif
     void CopyInvite()
     {
 #if NETCAFE_B1
@@ -1175,7 +1212,7 @@ public sealed partial class CafeEntryUi : MonoBehaviour
         }
         nickname = "WAN 验收房主";
         Connect(false);
-        float connectDeadline = Time.realtimeSinceStartup + 135f;
+        float connectDeadline = Time.realtimeSinceStartup + 180f;
         while (network.State != NetCafeNetworkSession.Phase.Connected &&
                network.State != NetCafeNetworkSession.Phase.Failed &&
                network.State != NetCafeNetworkSession.Phase.Disconnected &&
@@ -1225,7 +1262,7 @@ public sealed partial class CafeEntryUi : MonoBehaviour
             "LIVEKIT_DISCONNECTED_DURING_CONFIRM" => "LiveKit 在入房确认时断开连接。请稍后重试。",
             "WINDOWS_LOW_INTEGRITY" => "无法读取系统信任证书，请更换完整解压目录后重试。单人体验和本地开服仍可使用。",
             "NETWORK_UNREACHABLE" => "无法访问房间服务，请检查服务地址与网络连接。",
-            "SERVICE_WAKE_TIMEOUT" => "未能在 90 秒内收到房间服务的健康响应。公网开房请稍后重试。",
+            "SERVICE_WAKE_TIMEOUT" => "90 秒内未能完成房间服务检查，请稍后重试。",
             "SERVICE_UNAVAILABLE" => "房间服务无法连接实时服务器，请检查 LiveKit 配置与运行状态。",
             "INVALID_SERVER_REPLY" => "房间服务返回了无效数据，请检查服务器日志。",
             "HTTP_502" => "房间服务返回 HTTP 502，请确认本地开房服务及 LiveKit 正常启动。",
@@ -1233,7 +1270,7 @@ public sealed partial class CafeEntryUi : MonoBehaviour
             "RECONNECT_TIMEOUT" => "重连超时，请重新加入房间。",
             "RATE_LIMITED" => "请求过于频繁，请稍后重试。",
             "SESSION_EXPIRED" => "会话已过期，请重新加入。",
-            _ => "连接失败，请检查开房服务和网络。" 
+            _ => "连接失败，请检查开房服务和网络。"
         };
     }
     void OnDestroy()
